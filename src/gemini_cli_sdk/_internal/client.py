@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..types import GeminiOptions, Message, ResultMessage, SystemMessage, UserMessage
 from .parser import ParserStrategy
+from .parser.json_parser import JSONParser
 from .parser.llm_parser import LLMParser
 from .transport import Transport
 from .transport.subprocess_cli import SubprocessCLITransport
@@ -26,28 +27,29 @@ class InternalClient:
         Initialize the internal client.
 
         Args:
-            transport: Transport implementation (default: SubprocessCLITransport)
-            parser: Parser strategy (default: auto-detect based on env)
+            transport: Transport implementation (default: SubprocessCLITransport with JSON output)
+            parser: Parser strategy (default: JSONParser for native JSON output)
         """
-        self.transport = transport or SubprocessCLITransport()
+        self.transport = transport or SubprocessCLITransport(output_format="json")
         self.parser = parser or self._create_parser()
 
     def _create_parser(self) -> ParserStrategy:
         """Create parser based on environment configuration."""
-        parser_type = os.getenv("GEMINI_PARSER_STRATEGY", "llm").lower()
+        parser_type = os.getenv("GEMINI_PARSER_STRATEGY", "json").lower()
 
         if parser_type == "json":
-            # For future when JSON is supported
-            logger.warning(
-                "JSON parser requested but Gemini CLI doesn't support JSON output yet. "
-                "Falling back to LLM parser."
-            )
-            return LLMParser()
+            # Use native JSON parser (no extra API key needed)
+            return JSONParser()
         elif parser_type == "llm":
-            return LLMParser()
+            # Fall back to LLM parser if explicitly requested
+            try:
+                return LLMParser()
+            except Exception as e:
+                logger.warning(f"Failed to create LLM parser: {e}. Using JSON parser.")
+                return JSONParser()
         else:
-            logger.warning(f"Unknown parser type: {parser_type}. Using LLM parser.")
-            return LLMParser()
+            logger.warning(f"Unknown parser type: {parser_type}. Using JSON parser.")
+            return JSONParser()
 
     async def process_query(
         self, prompt: str, options: GeminiOptions

@@ -5,6 +5,7 @@ import os
 import shutil
 from pathlib import Path
 from subprocess import PIPE
+from typing import Literal
 
 import anyio
 from anyio.abc import Process
@@ -15,19 +16,27 @@ from . import Transport
 
 logger = logging.getLogger(__name__)
 
+OutputFormat = Literal["text", "json", "stream-json"]
+
 
 class SubprocessCLITransport(Transport):
     """Subprocess transport using Gemini CLI."""
 
-    def __init__(self, cli_path: str | Path | None = None):
+    def __init__(
+        self,
+        cli_path: str | Path | None = None,
+        output_format: OutputFormat = "json",
+    ):
         """
         Initialize subprocess transport.
 
         Args:
             cli_path: Path to Gemini CLI executable (auto-detected if None)
+            output_format: Output format to use (default: json for structured parsing)
         """
         self._cli_path = str(cli_path) if cli_path else self._find_cli()
         self._process: Process | None = None
+        self._output_format = output_format
 
     def _find_cli(self) -> str:
         """Find Gemini CLI binary."""
@@ -73,6 +82,9 @@ class SubprocessCLITransport(Transport):
         """Build CLI command with arguments."""
         cmd = [self._cli_path]
 
+        # Output format (use JSON for structured parsing)
+        cmd.extend(["-o", self._output_format])
+
         # Model selection
         if options.model:
             cmd.extend(["-m", options.model])
@@ -90,8 +102,18 @@ class SubprocessCLITransport(Transport):
         if options.all_files:
             cmd.append("-a")
 
+        # YOLO mode or approval mode
         if options.yolo:
             cmd.append("-y")
+        elif options.permission_mode:
+            # Map permission modes to approval modes
+            approval_mode_map = {
+                "default": "default",
+                "acceptEdits": "auto_edit",
+                "bypassPermissions": "yolo",
+            }
+            approval_mode = approval_mode_map.get(options.permission_mode, "default")
+            cmd.extend(["--approval-mode", approval_mode])
 
         if options.checkpointing:
             cmd.append("-c")
@@ -99,13 +121,26 @@ class SubprocessCLITransport(Transport):
         if options.extensions:
             cmd.extend(["-e", *options.extensions])
 
+        # Allowed tools
+        if options.allowed_tools:
+            cmd.extend(["--allowed-tools", *options.allowed_tools])
+
+        # MCP server names
         if options.allowed_mcp_server_names:
             cmd.extend(
                 ["--allowed-mcp-server-names", *options.allowed_mcp_server_names]
             )
 
-        # Add prompt (non-interactive mode)
-        cmd.extend(["-p", prompt])
+        # Session management
+        if options.resume:
+            cmd.extend(["--resume", options.resume])
+
+        # Include directories
+        if options.cwd:
+            cmd.extend(["--include-directories", str(options.cwd)])
+
+        # Add prompt as positional argument (not using deprecated -p)
+        cmd.append(prompt)
 
         return cmd
 
